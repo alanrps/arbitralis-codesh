@@ -1,0 +1,21 @@
+{
+  "name": "arbitralis-codesh",
+  "version": "1.0.0",
+  "description": "Prova de Conceito (PoC)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alanrps/arbitralis-codesh.git"
+  },
+  "keywords": [],
+  "author": "Alan Patriarca",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/alanrps/arbitralis-codesh/issues"
+  },
+  "homepage": "https://github.com/alanrps/arbitralis-codesh#readme"
+}
