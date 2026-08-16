@@ -1,10 +1,15 @@
 {
   "name": "arbitralis-codesh",
   "version": "1.0.0",
-  "description": "Prova de Conceito (PoC)",
-  "main": "index.js",
+  "description": "PoC de webhook assíncrono para a Lexi (Arbitralis)",
+  "main": "api/server.ts",
   "scripts": {
-    "start": "node index.js"
+    "dev": "tsx watch api/server.ts",
+    "start": "tsx api/server.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "repository": {
     "type": "git",
@@ -17,5 +22,18 @@
   "bugs": {
     "url": "https://github.com/alanrps/arbitralis-codesh/issues"
   },
-  "homepage": "https://github.com/alanrps/arbitralis-codesh#readme"
+  "homepage": "https://github.com/alanrps/arbitralis-codesh#readme",
+  "dependencies": {
+    "express": "^5.2.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.5",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^7.0.2",
+    "vitest": "^3.0.5"
+  }
 }
