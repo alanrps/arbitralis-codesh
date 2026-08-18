@@ -70,4 +70,17 @@ describe('processJob', () => {
     const kinds = sendWhatsAppMessage.mock.calls.map((call) => (call[0] as OutboundCallRecord).kind);
     expect(new Set(kinds).size).toBe(1);
   });
+
+  it('quando o envio do fallback também falha, não lança exceção e ainda move pra DLQ', async () => {
+    const callLlm = vi.fn().mockRejectedValue(new Error('sempre falha'));
+    const sendWhatsAppMessage = vi.fn().mockRejectedValue(new Error('WhatsApp API fora do ar'));
+    const onDeadLetter = vi.fn();
+
+    await expect(
+      processJob(makeJob(), { callLlm, sendWhatsAppMessage, onDeadLetter, maxAttempts: 2, backoffMs: [1, 1] }),
+    ).resolves.toBeUndefined();
+
+    expect(onDeadLetter).toHaveBeenCalledTimes(1);
+    expect(onDeadLetter.mock.calls[0]?.[0].lastError).toContain('WhatsApp API fora do ar');
+  });
 });

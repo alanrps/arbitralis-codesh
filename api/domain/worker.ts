@@ -93,8 +93,15 @@ export async function processJob(job: Job, deps: WorkerDeps): Promise<void> {
     at: new Date().toISOString(),
   };
   console.log(`[OUTBOUND WHATSAPP] messageId=${fallbackRecord.messageId} to=${maskPhone(fallbackRecord.to)} kind=${fallbackRecord.kind}`);
-  await sendWhatsAppMessage(fallbackRecord);
-  deps.onOutbound?.(fallbackRecord);
+
+  try {
+    await sendWhatsAppMessage(fallbackRecord);
+    deps.onOutbound?.(fallbackRecord);
+  } catch (sendError) {
+    const sendErrorMessage = sendError instanceof Error ? sendError.message : String(sendError);
+    console.log(`[WORKER] falha ao enviar outbound de fallback messageId=${job.messageId} erro=${sendErrorMessage}`);
+    lastError = `${lastError}; envio de saída falhou: ${sendErrorMessage}`;
+  }
 
   deps.onDeadLetter?.({ job, lastError, failedAt: new Date().toISOString() });
 }
