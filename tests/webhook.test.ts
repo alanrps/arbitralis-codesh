@@ -45,15 +45,16 @@ async function waitForOutbound(messageId: string, timeoutMs = 8000): Promise<Deb
   throw new Error(`outbound call para ${messageId} não apareceu a tempo`);
 }
 
+async function outboundCallsFor(messageId: string): Promise<DebugOutbound[]> {
+  const res = await request(app).get('/outbound-calls');
+  return (res.body as DebugOutbound[]).filter((r) => r.messageId === messageId);
+}
+
 describe('POST /webhook', () => {
-  it('responde rápido (202) sem esperar o LLM terminar', async () => {
-    // Força um resultado rápido em background: este teste só verifica a resposta HTTP
-    // imediata, e um job real (aleatório) aqui poderia "empatar" a fila sequencial e
-    // atrasar os testes seguintes, que competem pela mesma instância de InMemoryQueue.
+  it('responde 202 sem esperar o processamento do LLM terminar', async () => {
     const payload = samplePayload();
-    const start = Date.now();
-    const res = await request(app).post('/webhook').set('x-force-llm-outcome', 'success').send(payload);
-    const elapsed = Date.now() - start;
+
+    const res = await request(app).post('/webhook').set('x-force-llm-outcome', 'fail').send(payload);
 
     expect(res.status).toBe(202);
     expect(res.body).toEqual({
@@ -61,7 +62,9 @@ describe('POST /webhook', () => {
       messageId: payload.messageId,
       message: 'Mensagem recebida e em processamento',
     });
-    expect(elapsed).toBeLessThan(150);
+    expect(await outboundCallsFor(payload.messageId)).toHaveLength(0);
+
+    await waitForOutbound(payload.messageId);
   });
 
   it('rejeita payload inválido com 400 e detalha os campos com problema', async () => {
@@ -76,22 +79,18 @@ describe('POST /webhook', () => {
   });
 
   it('não duplica processamento quando a Meta reenvia o mesmo messageId', async () => {
-    const payload = samplePayload({ messageId: 'msg-idempotente' });
+    const payload = samplePayload();
 
     await request(app).post('/webhook').set('x-force-llm-outcome', 'success').send(payload);
     await request(app).post('/webhook').set('x-force-llm-outcome', 'success').send(payload);
 
     await waitForOutbound(payload.messageId);
-    await new Promise((resolve) => setTimeout(resolve, 300));
 
-    const res = await request(app).get('/outbound-calls');
-    const body = res.body as DebugOutbound[];
-    const matches = body.filter((r) => r.messageId === payload.messageId);
-    expect(matches).toHaveLength(1);
+    expect(await outboundCallsFor(payload.messageId)).toHaveLength(1);
   });
 
   it('quando o LLM falha sempre, aciona fallback e move o job para a DLQ', async () => {
-    const payload = samplePayload({ messageId: 'msg-falha-total' });
+    const payload = samplePayload();
 
     await request(app).post('/webhook').set('x-force-llm-outcome', 'fail').send(payload);
 
