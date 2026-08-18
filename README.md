@@ -10,7 +10,7 @@ PoC que desacopla o recebimento do webhook do WhatsApp do processamento de um LL
 - Vitest + Supertest (testes)
 - tsx (dev/execução sem etapa de build)
 
-## Como rodar
+## Instruções de como rodar
 
 ```bash
 npm install
@@ -19,7 +19,7 @@ npm run typecheck   # checagem de tipos
 npm test             # suíte de testes
 ```
 
-## Payload esperado pelo `POST /webhook`
+### Payload esperado pelo `POST /webhook`
 
 ```json
 {
@@ -37,7 +37,7 @@ Resposta imediata (`202`), sem esperar o LLM:
 { "status": "received", "messageId": "msg-001", "message": "Mensagem recebida e em processamento" }
 ```
 
-Payload inválido (validado com Zod em `api/http/schemas.ts`) retorna `400` com o detalhe de cada campo:
+Payload inválido retorna `400` com o detalhe de cada campo:
 ```json
 {
   "status": "error",
@@ -46,7 +46,7 @@ Payload inválido (validado com Zod em `api/http/schemas.ts`) retorna `400` com 
 }
 ```
 
-## Testando manualmente
+### Testando manualmente
 
 Tem uma coleção pronta em [`docs/lexi.postman_collection.json`](./docs/lexi.postman_collection.json), já com os cenários abaixo configurados. Ou via `curl` (com o servidor rodando em `npm run dev`):
 
@@ -72,7 +72,9 @@ curl localhost:3000/outbound-calls
 curl localhost:3000/dead-letters
 ```
 
-## Arquitetura: Receber → Processar → Responder
+## Documentação técnica
+
+### Arquitetura: Receber → Processar → Responder
 
 ```
 Meta (WhatsApp)                    Este serviço                      Meta (WhatsApp)
@@ -88,9 +90,9 @@ Meta (WhatsApp)                    Este serviço                      Meta (What
       │                                  │  (chamada de saída, outra conexão)│
 ```
 
-`POST /webhook` (entrada, síncrona, precisa responder rápido) e `POST /mock-whatsapp-send` (saída, simula a API real do WhatsApp recebendo o envio) são duas conexões HTTP independentes — a chave do desacoplamento.
+`POST /webhook` (entrada, síncrona) e `POST /mock-whatsapp-send` (saída, simula a API real do WhatsApp recebendo o envio) são duas conexões HTTP independentes — a chave do desacoplamento.
 
-### Organização do código: Ports & Adapters
+#### Organização do código: Ports & Adapters
 
 ```
 api/
@@ -103,27 +105,22 @@ api/
 
 `domain/` nunca importa de `http/` nem de `adapters/`, só o contrário — por isso dá pra testar todo o retry/DLQ (`tests/worker.test.ts`) sem servidor nem rede, e trocar o LLM/WhatsApp mock por uma integração real em produção mexeria só em `adapters/`.
 
-### Fluxo de retry
+#### Fluxo de retry
 
 - 3 tentativas de chamada ao LLM, com timeout de 3s por tentativa
 - Backoff exponencial entre tentativas: 500ms → 1000ms → 2000ms
 - Se uma tentativa tiver sucesso: outbound call com a resposta real (`kind: "success"`)
 - Se esgotar as 3 tentativas: outbound call de fallback pro cliente (`kind: "fallback"`) + o job vai para uma Dead Letter Queue (DLQ) em memória — **nunca** é reenfileirado na fila principal
 
-### Idempotência
+#### Idempotência
 
 A Meta pode reenviar o mesmo webhook se não receber `200`/`202` a tempo. A fila mantém um `Set` de `messageId` já vistos — reenvio do mesmo `messageId` retorna `202` normalmente, mas não gera um segundo processamento nem uma segunda resposta ao cliente.
 
-### Endpoints de depuração
+#### Hook de teste
 
-- `GET /outbound-calls` — chamadas de saída registradas
-- `GET /dead-letters` — itens que esgotaram as tentativas
+O header `x-force-llm-outcome: success | fail` força o resultado do LLM mock (ignorando o aleatório), usado pelos testes de integração para exercitar os caminhos de sucesso e de fallback + DLQ. Em produção, esse hook não existiria.
 
-### Hook de teste
-
-O header `x-force-llm-outcome: success | fail` força o resultado do LLM mock (ignorando o aleatório), usado pelos testes de integração para exercitar os caminhos de sucesso e de fallback + DLQ de forma determinística. Não existe validação de autenticação/autorização nesse endpoint na PoC — em produção, esse hook não existiria.
-
-## Logs
+### Logs
 
 Dados sensíveis (telefone, conteúdo da negociação) nunca aparecem em texto claro nos logs — nem nos endpoints de debug. Convenção:
 
@@ -136,40 +133,43 @@ Dados sensíveis (telefone, conteúdo da negociação) nunca aparecem em texto c
 [MOCK WHATSAPP API] mensagem enviada messageId=msg-001 to=+*********8888 kind=success
 ```
 
-Em produção, trocaríamos `console.log` por um logger estruturado (Pino/Winston) gerando JSON com `level`/`timestamp`/`traceId`, para correlacionar os logs de uma mesma negociação em uma ferramenta como CloudWatch/Datadog/ELK.
+Em produção, trocaríamos `console.log` por um logger estruturado gerando JSON com `level`/`timestamp`/`traceId`, para correlacionar os logs de uma mesma negociação em uma ferramenta como CloudWatch/Datadog/ELK.
 
-## Testes
+### Testes
 
 - `tests/mask.test.ts` — `maskPhone`/`maskText` mascaram corretamente
 - `tests/worker.test.ts` — `processJob` com dependências injetadas: sucesso na 1ª tentativa, retry até sucesso, esgota tentativas → fallback + DLQ, exclusividade success/fallback
 - `tests/webhook.test.ts` — resposta rápida (não espera o LLM), payload inválido → 400, idempotência (mesmo `messageId` não duplica), fluxo completo de falha → fallback + DLQ
 
-## O que ficou de fora (e por quê)
+### O que ficou de fora
 
-- **Teste de carga/concorrência real** — o worker processa um job por vez; não há teste de múltiplos workers/paralelismo, que exigiria uma infra de fila real para fazer sentido.
-- **Logger estruturado** — `console.log` com prefixo é suficiente pra uma PoC local; produção usaria Pino/Winston.
-- **Persistência da fila/DLQ** — tudo em memória; um restart do processo perde jobs pendentes e a DLQ.
+- **Testes de concorrência** — o worker processa um job por vez, não há teste de múltiplos workers/paralelismo, que exigiria configuração da infra.
+- **Logger estruturado** — `console.log` com prefixo é suficiente pra uma PoC local. Em produção usaria Pino/Winston.
+- **Persistência da fila/DLQ** — tudo em memória e um restart do processo perde jobs pendentes e a DLQ.
+- **Reprocessamento da DLQ** — só permite a leitura (`GET /dead-letters`). Em produção um operador aciona o reenvio das mensagens da DLQ de volta pra fila principal depois de confirmar que o problema foi resolvido.
 
-## ADR-001: Mecanismo de fila
+## ADR (Architecture Decision Record)
+
+### ADR-001: Mecanismo de fila
 
 **Contexto:** a PoC precisa desacoplar o recebimento do webhook do processamento do LLM, sem depender de infraestrutura externa (restrição do desafio) e rodando localmente.
 
-**Decisão:** fila em memória (array + `Set` para idempotência), com um worker que drena um job por vez.
+**Decisão:** fila em memória, com um worker que drena um job por vez.
 
 **Alternativas consideradas:**
 | Tecnologia | Prós | Contras |
 |---|---|---|
 | **Amazon SQS** | Gerenciado, DLQ nativa (`RedrivePolicy`), `visibility timeout` resolve worker morrendo no meio | *At-least-once delivery* (duplicatas possíveis), FIFO reduz throughput |
 | **RabbitMQ** | Controle fino de roteamento, DLQ nativa | Precisa operar/manter cluster |
-| **Kafka** | Bom para volume muito grande, replay de eventos | Overkill pro caso; DLQ não é conceito nativo (é mais streaming que fila de tarefas) |
+| **Kafka** | Bom para volume muito grande, replay de eventos | Overkill pro caso, DLQ não é conceito nativo (é mais streaming que fila de tarefas) |
 
 Em produção, a escolha seria **Amazon SQS**: resolve DLQ e retry nativamente, e o modelo *at-least-once* dele conecta bem com o próprio comportamento de reenvio de webhook da Meta — ambos exigem idempotência do lado do consumidor de qualquer forma.
 
 **Consequências:** a fila em memória não é durável (perde jobs num restart) e não escala horizontalmente (um único processo), mas é suficiente para provar o conceito de desacoplamento.
 
-## ADR-002: Estratégia de retry e DLQ
+### ADR-002: Estratégia de retry e DLQ
 
-**Contexto:** o LLM externo pode falhar ou demorar; o cliente não pode ficar sem retorno numa negociação sensível de dívida.
+**Contexto:** o LLM externo pode falhar ou demorar, e o cliente não pode ficar sem retorno numa negociação sensível de dívida.
 
 **Decisão:** retry com backoff exponencial (3 tentativas: 500ms, 1000ms, 2000ms), timeout de 3s por tentativa. Ao esgotar as tentativas: uma chamada de outbound de fallback (mensagem de instabilidade) + o job vai para uma DLQ separada, nunca é reenfileirado na fila principal (evitaria efeito cascata numa API já instável).
 
@@ -178,7 +178,7 @@ Em produção, a escolha seria **Amazon SQS**: resolve DLQ e retry nativamente, 
 |---|---|
 | Array em memória | Fila SQS |
 | Loop de retry com contador | `maxReceiveCount` na `RedrivePolicy` |
-| "Esgotou, joga em outro array" | SQS move automaticamente para a DLQ configurada |
+| Esgotou, adiciona em outro array | SQS move automaticamente para a DLQ configurada |
 | Backoff manual com `setTimeout` | Visibility timeout crescente / backoff configurável |
 | Log da falha | CloudWatch Alarm na métrica da DLQ |
 
